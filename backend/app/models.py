@@ -25,6 +25,12 @@ class Decision(StrEnum):
     BLOCK = "block"
 
 
+class DocumentClassification(StrEnum):
+    SAFE = "SAFE"
+    SUSPICIOUS = "SUSPICIOUS"
+    MALICIOUS = "MALICIOUS"
+
+
 class ProvenanceSource(BaseModel):
     source_id: str = Field(min_length=1)
     source_type: SourceType
@@ -120,4 +126,41 @@ class AuditEvent(BaseModel):
     risk_score: int = Field(ge=0, le=100)
     evidence_count: int
     evidence: list[Evidence] = Field(default_factory=list)
+    created_at: datetime
+
+
+class DocumentFinding(BaseModel):
+    filename: str
+    line_number: int = Field(ge=1)
+    detected_text: str
+    severity: DocumentClassification
+    explanation: str
+    rule_id: str
+    evidence: str = ""
+
+
+class DocumentScanResult(BaseModel):
+    document_id: str
+    owner_token: str
+    filename: str
+    classification: DocumentClassification
+    status: str
+    findings: list[DocumentFinding] = Field(default_factory=list)
+    extracted_line_count: int = Field(ge=0)
+    created_at: datetime
+
+
+class DocumentApproval(BaseModel):
+    decision: str
+    owner_token: str
+    approver_id: str = Field(min_length=1)
+
+
+class DocumentAuditEvent(BaseModel):
+    event_id: str
+    document_id: str
+    filename: str
+    event_type: str
+    classification: DocumentClassification
+    detail: str
     created_at: datetime
