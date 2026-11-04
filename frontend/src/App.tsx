@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
-const API = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
+const API = import.meta.env.VITE_API_URL ?? ''
 type User = { user_id: string; full_name: string; email: string; provider: string; email_verified: boolean; created_at: string }
 type Document = { document_id: string; filename: string; classification: string; status: string; findings: Finding[]; created_at: string }
 type Finding = { filename: string; line_number: number; detected_text: string; severity: string; explanation: string; rule_id: string }
