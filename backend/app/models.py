@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -25,6 +26,14 @@ class Decision(StrEnum):
     BLOCK = "block"
 
 
+class ThreatCategory(StrEnum):
+    INSTRUCTION_OVERRIDE = "instruction_override"
+    CONFIDENTIAL_INFORMATION_EXTRACTION = "confidential_information_extraction"
+    UNAUTHORIZED_DATA_TRANSFER = "unauthorized_data_transfer"
+    SECURITY_BYPASS = "security_bypass"
+    TASK_MANIPULATION = "task_manipulation"
+
+
 class DocumentClassification(StrEnum):
     SAFE = "SAFE"
     SUSPICIOUS = "SUSPICIOUS"
@@ -45,6 +54,29 @@ class ProvenanceSource(BaseModel):
             TrustLevel.TRUSTED,
             TrustLevel.VERIFIED,
         )
+
+
+class DocumentProvenance(BaseModel):
+    source_id: str = Field(min_length=1)
+    source_type: Literal[SourceType.DOCUMENT] = SourceType.DOCUMENT
+    trust_level: TrustLevel = TrustLevel.UNTRUSTED
+    filename: str = Field(min_length=1)
+    content_type: str = Field(min_length=1)
+    content_sha256: str = Field(min_length=1)
+    parent_source_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class DocumentFinding(BaseModel):
+    filename: str
+    line_number: int = Field(ge=1)
+    detected_text: str
+    severity: DocumentClassification
+    explanation: str
+    rule_id: str
+    evidence: str = ""
+    source_id: str | None = None
+    content_sha256: str | None = None
 
 
 def trusted_backend_source(
@@ -81,6 +113,9 @@ class ActionProposal(ActionStep):
     sequence: list[ActionStep] = Field(default_factory=list)
     approval_request_id: str | None = None
     workflow_id: str | None = None
+    user_task: str | None = None
+    document_provenance: list[DocumentProvenance] = Field(default_factory=list)
+    document_findings: list[DocumentFinding] = Field(default_factory=list)
 
 
 class Evidence(BaseModel):
@@ -99,6 +134,9 @@ class AnalysisResult(BaseModel):
     recommended_next_step: str
     enforcement: str = "deterministic_policy"
     mode: str = "demo"
+    threat_categories: list[ThreatCategory] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    ai_status: str = "not_run"
 
 
 class ApprovalRequest(BaseModel):
@@ -115,6 +153,10 @@ class InterceptResponse(BaseModel):
     evidence: list[Evidence]
     recommended_next_step: str
     created_at: datetime
+    threat_categories: list[ThreatCategory] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    mode: str = "demo"
+    ai_status: str = "not_run"
 
 
 class AuditEvent(BaseModel):
@@ -129,16 +171,6 @@ class AuditEvent(BaseModel):
     created_at: datetime
 
 
-class DocumentFinding(BaseModel):
-    filename: str
-    line_number: int = Field(ge=1)
-    detected_text: str
-    severity: DocumentClassification
-    explanation: str
-    rule_id: str
-    evidence: str = ""
-
-
 class DocumentScanResult(BaseModel):
     document_id: str
     owner_token: str
@@ -146,6 +178,18 @@ class DocumentScanResult(BaseModel):
     classification: DocumentClassification
     status: str
     findings: list[DocumentFinding] = Field(default_factory=list)
+    provenance: DocumentProvenance | None = None
+    extracted_line_count: int = Field(ge=0)
+    created_at: datetime
+
+
+class DocumentMonitorItem(BaseModel):
+    document_id: str
+    filename: str
+    classification: DocumentClassification
+    status: str
+    findings: list[DocumentFinding] = Field(default_factory=list)
+    provenance: DocumentProvenance | None = None
     extracted_line_count: int = Field(ge=0)
     created_at: datetime
 

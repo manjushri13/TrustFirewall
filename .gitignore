@@ -6,6 +6,7 @@ venv/
 .env
 .env.*
 !.env.example
+backend/trustfirewall_documents.sqlite3
 
 # Node
 node_modules/

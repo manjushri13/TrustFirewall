@@ -1,6 +1,7 @@
 import re
 from collections.abc import Sequence
 
+from .ai_security_analyzer import AIContextAnalysis
 from .models import (
     ActionProposal,
     ActionStep,
@@ -8,6 +9,7 @@ from .models import (
     Decision,
     Evidence,
     ProvenanceSource,
+    ThreatCategory,
 )
 
 
@@ -17,6 +19,17 @@ PROMPT_INJECTION_PATTERNS = (
     r"reveal (the )?(system|developer) prompt",
     r"override (the )?(security|system) policy",
     r"do not tell the user",
+    r"ignore previous",
+)
+SECURITY_BYPASS_PATTERNS = (
+    r"bypass approval",
+    r"approval requirements",
+)
+TASK_MANIPULATION_PATTERNS = (
+    r"stop (the )?current task",
+    r"unrelated task",
+    r"instead of the requested",
+    r"redirect the agent",
 )
 
 
@@ -134,9 +147,63 @@ def _resolve_sources(
     return sources, missing_refs
 
 
+def _category_set(
+    proposal: ActionProposal,
+    evidence: list[Evidence],
+    all_steps: list[tuple[ActionStep, list[ProvenanceSource]]],
+    current_sources: list[ProvenanceSource],
+    ai_categories: set[ThreatCategory],
+) -> list[ThreatCategory]:
+    categories = set(ai_categories)
+    evidence_rules = {item.rule_id for item in evidence}
+    if "PROMPT-INJECTION" in evidence_rules:
+        categories.add(ThreatCategory.INSTRUCTION_OVERRIDE)
+    if "UNTRUSTED-SENSITIVE-ACTION" in evidence_rules and _is_sensitive_read(proposal):
+        categories.add(ThreatCategory.CONFIDENTIAL_INFORMATION_EXTRACTION)
+    if {"DATA-EXFILTRATION-CHAIN", "TRUST-CONFLICT"} & evidence_rules:
+        categories.add(ThreatCategory.UNAUTHORIZED_DATA_TRANSFER)
+    if current_sources and any(
+        not source.is_backend_trusted for source in current_sources
+    ) and _is_external_transfer(proposal):
+        categories.add(ThreatCategory.UNAUTHORIZED_DATA_TRANSFER)
+    if "AUDIT-EVASION" in evidence_rules:
+        categories.add(ThreatCategory.SECURITY_BYPASS)
+
+    if any(_is_hiding(step) for step, _ in all_steps):
+        categories.add(ThreatCategory.SECURITY_BYPASS)
+    if any(
+        _contains_any(source.content, SECURITY_BYPASS_PATTERNS)
+        for source in current_sources
+    ):
+        categories.add(ThreatCategory.SECURITY_BYPASS)
+    if any(_is_sensitive_read(step) for step, _ in all_steps) and any(
+        _is_external_transfer(step) for step, _ in all_steps
+    ):
+        categories.add(ThreatCategory.UNAUTHORIZED_DATA_TRANSFER)
+    if any(
+        _contains_any(source.content, PROMPT_INJECTION_PATTERNS)
+        for source in current_sources
+    ):
+        categories.add(ThreatCategory.TASK_MANIPULATION)
+    if any(
+        _contains_any(source.content, TASK_MANIPULATION_PATTERNS)
+        for source in current_sources
+    ):
+        categories.add(ThreatCategory.TASK_MANIPULATION)
+    if len(all_steps) >= 2 and any(
+        _steps_are_related(first, second)
+        for index, (first, _) in enumerate(all_steps)
+        for second, _ in all_steps[index + 1 :]
+    ):
+        categories.add(ThreatCategory.TASK_MANIPULATION)
+    return sorted(categories, key=lambda item: item.value)
+
+
 def analyze_proposal(
     proposal: ActionProposal,
     history: Sequence[ActionProposal] = (),
+    ai_analysis: AIContextAnalysis | None = None,
+    ai_status: str = "not_run",
 ) -> AnalysisResult:
     evidence: list[Evidence] = []
     score = 0
@@ -192,6 +259,22 @@ def analyze_proposal(
                 source_ids=sorted(set(missing_refs)),
             )
         )
+
+    ai_categories: set[ThreatCategory] = set()
+    if ai_analysis is not None:
+        for threat in ai_analysis.threats:
+            ai_categories.add(threat.category)
+            evidence.append(
+                Evidence(
+                    rule_id=f"AI-{threat.category.value.upper()}",
+                    severity=Decision.FLAG,
+                    title=f"AI advisory: {threat.category.value.replace('_', ' ').title()}",
+                    detail=f"{threat.explanation} Relationship: {ai_analysis.relationship}",
+                    source_ids=threat.source_ids,
+                )
+            )
+        if ai_analysis.threats:
+            score += min(25, 5 * len(ai_analysis.threats))
 
     current_sources = [
         source
@@ -309,10 +392,27 @@ def analyze_proposal(
         Decision.BLOCK: "Keep the proposal blocked; investigate the evidence before retrying.",
     }[decision]
 
+    categories = _category_set(
+        proposal,
+        evidence,
+        all_steps,
+        current_sources,
+        ai_categories,
+    )
     return AnalysisResult(
         action_id=proposal.action_id,
         decision=decision,
         risk_score=score,
         evidence=evidence,
         recommended_next_step=next_step,
+        threat_categories=categories,
+        source_ids=sorted(
+            {
+                source_id
+                for item in evidence
+                for source_id in item.source_ids
+            }
+        ),
+        mode="ai_assisted" if ai_analysis is not None else "demo",
+        ai_status=ai_status,
     )

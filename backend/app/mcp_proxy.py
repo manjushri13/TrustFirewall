@@ -7,6 +7,7 @@ VS Code built-in tools or Copilot tools that are configured outside this server.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -17,7 +18,13 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any
 
-from .models import ActionProposal, ProvenanceSource, TrustLevel
+from .models import (
+    ActionProposal,
+    DocumentFinding,
+    DocumentProvenance,
+    ProvenanceSource,
+    TrustLevel,
+)
 
 
 def build_action_proposal(
@@ -31,6 +38,22 @@ def build_action_proposal(
     workflow_id = forwarded_arguments.pop("_trustfirewall_workflow_id", None)
     provenance_refs = forwarded_arguments.pop("_trustfirewall_provenance_refs", [])
     permissions = forwarded_arguments.pop("_trustfirewall_permissions", [])
+    user_task = forwarded_arguments.pop("_trustfirewall_user_task", None)
+    raw_document_provenance = forwarded_arguments.pop(
+        "_trustfirewall_document_provenance",
+        [],
+    )
+    raw_document_findings = forwarded_arguments.pop(
+        "_trustfirewall_document_findings",
+        [],
+    )
+    action_fingerprint = hashlib.sha256(
+        json.dumps(
+            {"tool": tool_name, "arguments": forwarded_arguments},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:24]
     provenance = [
         ProvenanceSource.model_validate(item).model_copy(
             update={"trust_level": TrustLevel.UNKNOWN}
@@ -38,7 +61,7 @@ def build_action_proposal(
         for item in raw_provenance
     ]
     proposal = ActionProposal(
-        action_id=f"mcp-{tool_name}-{request_id}",
+        action_id=f"mcp-{tool_name}-{action_fingerprint}",
         action_type="mcp_tool_call",
         description=f"Call MCP tool '{tool_name}' with structured arguments.",
         target=tool_name,
@@ -47,6 +70,17 @@ def build_action_proposal(
         provenance_refs=provenance_refs,
         approval_request_id=approval_request_id,
         workflow_id=workflow_id,
+        user_task=user_task,
+        document_provenance=[
+            DocumentProvenance.model_validate(item).model_copy(
+                update={"trust_level": TrustLevel.UNTRUSTED}
+            )
+            for item in raw_document_provenance
+        ],
+        document_findings=[
+            DocumentFinding.model_validate(item)
+            for item in raw_document_findings
+        ],
     )
     return proposal, forwarded_arguments
 
