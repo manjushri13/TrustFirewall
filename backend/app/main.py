@@ -5,17 +5,10 @@ from uuid import uuid4
 
 import os
 import re
-import json
-import smtplib
-import urllib.parse
-import urllib.request
 from typing import Annotated
-from email.message import EmailMessage
 from fastapi import Cookie, FastAPI, File, Header, UploadFile, Response
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
-from authlib.jose import JsonWebKey, jwt
 
 from .models import (
     ActionProposal,
@@ -93,67 +86,6 @@ class ConnectionRequest(BaseModel):
     status: str = Field(default="selected", pattern=r"^(not_selected|selected|connecting|connected|failed|disconnected|configuration_required)$")
 
 
-def _send_verification_email(email: str, token: str) -> bool:
-    host = os.getenv("SMTP_HOST")
-    sender = os.getenv("SMTP_FROM_EMAIL")
-    if not host or not sender:
-        return False
-    message = EmailMessage()
-    message["Subject"] = "Verify your TrustFirewall email"
-    message["From"] = sender
-    message["To"] = email
-    message.set_content(
-        f"Verify your TrustFirewall account: {os.getenv('TRUSTFIREWALL_PUBLIC_URL', 'http://localhost:5173')}/verify-email?token={token}"
-    )
-    with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=10) as smtp:
-        smtp.starttls()
-        username = os.getenv("SMTP_USERNAME")
-        if username:
-            smtp.login(username, os.getenv("SMTP_PASSWORD", ""))
-        smtp.send_message(message)
-    return True
-
-
-def _google_configured() -> bool:
-    return all(os.getenv(name) for name in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"))
-
-
-def _google_token(code: str) -> dict[str, object]:
-    payload = urllib.parse.urlencode(
-        {
-            "code": code,
-            "client_id": os.environ["GOOGLE_CLIENT_ID"],
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "redirect_uri": os.environ["GOOGLE_REDIRECT_URI"],
-            "grant_type": "authorization_code",
-        }
-    ).encode()
-    request = urllib.request.Request("https://oauth2.googleapis.com/token", data=payload, method="POST")
-    with urllib.request.urlopen(request, timeout=10) as response:
-        value = json.loads(response.read())
-    if not isinstance(value, dict) or not value.get("id_token"):
-        raise ValueError("Google did not return an ID token.")
-    return value
-
-
-def _validate_google_id_token(id_token: str, expected_nonce: str) -> dict[str, object]:
-    with urllib.request.urlopen("https://www.googleapis.com/oauth2/v3/certs", timeout=10) as response:
-        key_set = json.loads(response.read())
-    claims = jwt.decode(
-        id_token,
-        JsonWebKey.import_key_set(key_set),
-        claims_options={
-            "iss": {"essential": True, "values": ["https://accounts.google.com", "accounts.google.com"]},
-            "aud": {"essential": True, "values": [os.environ["GOOGLE_CLIENT_ID"]]},
-            "exp": {"essential": True},
-            "email_verified": {"essential": True, "values": [True]},
-            "nonce": {"essential": True, "value": expected_nonce},
-        },
-    )
-    claims.validate()
-    return dict(claims)
-
-
 def _public_user(user: UserRecord) -> dict[str, object]:
     return user.model_dump(mode="json")
 
@@ -166,6 +98,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
         secure=os.getenv("TRUSTFIREWALL_COOKIE_SECURE", "false").lower() == "true",
         samesite="lax",
         max_age=604800,
+        path="/",
     )
 
 
@@ -194,17 +127,8 @@ def register(request: RegisterRequest, response: Response) -> dict[str, object]:
         if "UNIQUE constraint failed" in str(error):
             raise HTTPException(status_code=409, detail="An account with that email already exists.") from error
         raise
-    verification_sent = False
-    if not user.email_verified:
-        try:
-            verification_sent = _send_verification_email(
-                user.email,
-                _auth_store.create_verification_token(user.user_id),
-            )
-        except (OSError, smtplib.SMTPException, ValueError):
-            verification_sent = False
     _set_session_cookie(response, _auth_store.create_session(user.user_id))
-    return {"user": _public_user(user), "verification_sent": verification_sent}
+    return {"user": _public_user(user)}
 
 
 @app.post("/api/auth/login")
@@ -217,30 +141,30 @@ def login(request: LoginRequest, response: Response) -> dict[str, object]:
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(response: Response, session: Annotated[str | None, Cookie()] = None) -> None:
+def logout(response: Response, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> None:
     if session:
         _auth_store.delete_session(session)
     response.delete_cookie("trustfirewall_session")
 
 
 @app.get("/api/auth/me")
-def auth_me(session: Annotated[str | None, Cookie()] = None) -> dict[str, object]:
+def auth_me(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> dict[str, object]:
     return {"user": _public_user(_authenticated_user(session))}
 
 
 @app.get("/api/users/me")
-def get_profile(session: Annotated[str | None, Cookie()] = None) -> dict[str, object]:
+def get_profile(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> dict[str, object]:
     return {"user": _public_user(_authenticated_user(session))}
 
 
 @app.patch("/api/users/me")
-def update_profile(request: ProfileUpdate, session: Annotated[str | None, Cookie()] = None) -> dict[str, object]:
+def update_profile(request: ProfileUpdate, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> dict[str, object]:
     user = _authenticated_user(session)
     return {"user": _public_user(_auth_store.update_user(user.user_id, request.full_name.strip(), request.profile_image_url))}
 
 
 @app.post("/api/auth/change-password")
-def change_password(request: PasswordChangeRequest, session: Annotated[str | None, Cookie()] = None) -> dict[str, str]:
+def change_password(request: PasswordChangeRequest, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> dict[str, str]:
     user = _authenticated_user(session)
     if request.new_password != request.confirm_password:
         raise HTTPException(status_code=422, detail="New passwords do not match.")
@@ -250,26 +174,6 @@ def change_password(request: PasswordChangeRequest, session: Annotated[str | Non
     _auth_store.change_password(user.user_id, request.new_password)
     _auth_store.revoke_other_sessions(user.user_id, session)
     return {"status": "password_changed"}
-
-
-@app.get("/api/auth/verify-email")
-def verify_email(token: str) -> dict[str, object]:
-    user = _auth_store.consume_verification_token(token)
-    if user is None:
-        raise HTTPException(status_code=400, detail="The verification link is invalid or expired.")
-    return {"verified": True, "user": _public_user(user)}
-
-
-@app.post("/api/auth/resend-verification")
-def resend_verification(session: Annotated[str | None, Cookie()] = None) -> dict[str, bool]:
-    user = _authenticated_user(session)
-    if user.email_verified:
-        return {"verification_sent": False}
-    try:
-        sent = _send_verification_email(user.email, _auth_store.create_verification_token(user.user_id))
-    except (OSError, smtplib.SMTPException, ValueError):
-        sent = False
-    return {"verification_sent": sent}
 
 
 @app.get("/api/agents")
@@ -283,12 +187,12 @@ def agent_catalog() -> list[dict[str, object]]:
 
 
 @app.get("/api/agents/connections", response_model=list[AgentConnectionRecord])
-def agent_connections(session: Annotated[str | None, Cookie()] = None) -> list[AgentConnectionRecord]:
+def agent_connections(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> list[AgentConnectionRecord]:
     return _auth_store.list_connections(_authenticated_user(session).user_id)
 
 
 @app.post("/api/agents/connections", response_model=AgentConnectionRecord)
-def create_agent_connection(request: ConnectionRequest, session: Annotated[str | None, Cookie()] = None) -> AgentConnectionRecord:
+def create_agent_connection(request: ConnectionRequest, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> AgentConnectionRecord:
     status_value = request.status
     if request.provider != "custom" and status_value in {"selected", "connecting", "connected"}:
         status_value = "configuration_required"
@@ -296,7 +200,7 @@ def create_agent_connection(request: ConnectionRequest, session: Annotated[str |
 
 
 @app.patch("/api/agents/connections/{connection_id}", response_model=AgentConnectionRecord)
-def update_agent_connection(connection_id: str, request: ConnectionRequest, session: Annotated[str | None, Cookie()] = None) -> AgentConnectionRecord:
+def update_agent_connection(connection_id: str, request: ConnectionRequest, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> AgentConnectionRecord:
     user = _authenticated_user(session)
     current = next((item for item in _auth_store.list_connections(user.user_id) if item.connection_id == connection_id), None)
     if current is None:
@@ -308,74 +212,11 @@ def update_agent_connection(connection_id: str, request: ConnectionRequest, sess
 
 
 @app.delete("/api/agents/connections/{connection_id}", status_code=204)
-def delete_agent_connection(connection_id: str, session: Annotated[str | None, Cookie()] = None) -> None:
+def delete_agent_connection(connection_id: str, session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> None:
     if not _auth_store.delete_connection(_authenticated_user(session).user_id, connection_id):
         raise HTTPException(status_code=404, detail="Connection was not found.")
 
 
-@app.get("/api/auth/google")
-def google_auth_start(response: Response) -> Response:
-    if not _google_configured():
-        raise HTTPException(status_code=503, detail="Google authentication is not configured.")
-    nonce = token_urlsafe(32)
-    state = _auth_store.create_oauth_state(nonce)
-    query = urllib.parse.urlencode({
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "redirect_uri": os.environ["GOOGLE_REDIRECT_URI"],
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-        "nonce": nonce,
-        "access_type": "offline",
-        "prompt": "select_account",
-    })
-    redirect = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{query}")
-    redirect.set_cookie(
-        "trustfirewall_oauth_nonce",
-        nonce,
-        httponly=True,
-        secure=os.getenv("TRUSTFIREWALL_COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
-        max_age=600,
-    )
-    return redirect
-
-
-@app.get("/api/auth/google/callback")
-def google_auth_callback(
-    code: str | None = None,
-    state: str | None = None,
-    error: str | None = None,
-    nonce: Annotated[str | None, Cookie(alias="trustfirewall_oauth_nonce")] = None,
-) -> Response:
-    if error:
-        raise HTTPException(status_code=400, detail="Google authentication was cancelled or denied.")
-    if not code or not state or not nonce or not _auth_store.consume_oauth_state(state, nonce):
-        raise HTTPException(status_code=400, detail="Google authentication state is invalid or expired.")
-    try:
-        tokens = _google_token(code)
-        claims = _validate_google_id_token(str(tokens["id_token"]), nonce)
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Google identity validation failed.") from exc
-    subject = str(claims.get("sub", ""))
-    email = str(claims.get("email", "")).lower()
-    if not subject or not email or claims.get("email_verified") is not True:
-        raise HTTPException(status_code=401, detail="Google did not provide a verified identity.")
-    user = _auth_store.find_google_user(subject)
-    if user is None:
-        try:
-            user = _auth_store.create_google_user(
-                str(claims.get("name") or email),
-                email,
-                subject,
-                str(claims["picture"]) if claims.get("picture") else None,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail="This Google email requires signing in to its existing account before linking.") from exc
-    redirect = RedirectResponse("/")
-    _set_session_cookie(redirect, _auth_store.create_session(user.user_id))
-    redirect.delete_cookie("trustfirewall_oauth_nonce")
-    return redirect
 
 
 @app.get("/health")
@@ -453,7 +294,7 @@ def _attach_document_sources(proposal: ActionProposal) -> ActionProposal:
 @app.post("/api/documents/scan", response_model=list[DocumentScanResult])
 async def scan_documents(
     files: list[UploadFile] = File(...),
-    session: Annotated[str | None, Cookie()] = None,
+    session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None,
 ) -> list[DocumentScanResult]:
     user = _auth_store.get_session_user(session) if session else None
     results: list[DocumentScanResult] = []
@@ -568,7 +409,7 @@ async def scan_documents(
 def approve_document(
     document_id: str,
     request: DocumentApproval,
-    session: Annotated[str | None, Cookie()] = None,
+    session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None,
 ) -> DocumentScanResult:
     stored = _document_store.get_document(document_id)
     if stored is None:
@@ -605,7 +446,7 @@ def approve_document(
 def release_document(
     document_id: str,
     authorization: str | None = Header(default=None),
-    session: Annotated[str | None, Cookie()] = None,
+    session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None,
 ) -> dict[str, str | bytes]:
     stored = _document_store.get_document(document_id)
     if stored is None:
@@ -627,14 +468,14 @@ def release_document(
 
 
 @app.get("/api/document-audit", response_model=list[DocumentAuditEvent])
-def document_audit_history(session: Annotated[str | None, Cookie()] = None) -> list[DocumentAuditEvent]:
+def document_audit_history(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> list[DocumentAuditEvent]:
     with _audit_lock:
         user = _auth_store.get_session_user(session) if session else None
         return _document_store.audit_history(user.user_id if user else None)
 
 
 @app.get("/api/documents/monitoring", response_model=list[DocumentMonitorItem])
-def document_monitoring(session: Annotated[str | None, Cookie()] = None) -> list[DocumentMonitorItem]:
+def document_monitoring(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> list[DocumentMonitorItem]:
     return _document_store.list_documents(_authenticated_user(session).user_id)
 
 
@@ -679,7 +520,7 @@ def _intercept_response(
 @app.post("/api/intercept", response_model=InterceptResponse)
 def intercept_action(
     proposal: ActionProposal,
-    session: Annotated[str | None, Cookie()] = None,
+    session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None,
 ) -> InterceptResponse:
     if proposal.approval_request_id:
         with _audit_lock:
@@ -755,7 +596,7 @@ def intercept_action(
 
 
 @app.get("/api/audit", response_model=list[AuditEvent | DocumentAuditEvent])
-def audit_history(session: Annotated[str | None, Cookie()] = None) -> list[AuditEvent | DocumentAuditEvent]:
+def audit_history(session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None) -> list[AuditEvent | DocumentAuditEvent]:
     user = _auth_store.get_session_user(session) if session else None
     with _audit_lock:
         events = list(_audit_events.values()) if user is None else [
@@ -770,7 +611,7 @@ def audit_history(session: Annotated[str | None, Cookie()] = None) -> list[Audit
 def approve_intercept(
     request_id: str,
     request: ApprovalRequest,
-    session: Annotated[str | None, Cookie()] = None,
+    session: Annotated[str | None, Cookie(alias="trustfirewall_session")] = None,
 ) -> AuditEvent:
     with _audit_lock:
         event = _audit_events.get(request_id)

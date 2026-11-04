@@ -19,7 +19,6 @@ class UserRecord(BaseModel):
     email: str
     profile_image_url: str | None = None
     provider: str
-    email_verified: bool = False
     created_at: datetime
 
 
@@ -51,8 +50,6 @@ class AuthStore:
                     password_hash TEXT,
                     profile_image_url TEXT,
                     provider TEXT NOT NULL,
-                    google_subject TEXT UNIQUE,
-                    email_verified INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'active'
@@ -74,25 +71,8 @@ class AuthStore:
                     UNIQUE(user_id, provider),
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 );
-                CREATE TABLE IF NOT EXISTS oauth_states (
-                    state_hash TEXT PRIMARY KEY,
-                    nonce_hash TEXT NOT NULL,
-                    expires_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS email_verification_tokens (
-                    token_hash TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    used_at TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                );
                 """
             )
-            columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
-            if "google_subject" not in columns:
-                connection.execute("ALTER TABLE users ADD COLUMN google_subject TEXT")
-            if "email_verified" not in columns:
-                connection.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -145,14 +125,13 @@ class AuthStore:
     def get_user(self, user_id: str) -> UserRecord:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT user_id, full_name, email, profile_image_url, provider, email_verified, created_at FROM users WHERE user_id = ? AND status = 'active'",
+                "SELECT user_id, full_name, email, profile_image_url, provider, created_at FROM users WHERE user_id = ? AND status = 'active'",
                 (user_id,),
             ).fetchone()
         if row is None:
             raise LookupError("User was not found.")
         values = dict(row)
         values["created_at"] = datetime.fromisoformat(row["created_at"])
-        values["email_verified"] = bool(values["email_verified"])
         return UserRecord(**values)
 
     def authenticate(self, email: str, password: str) -> UserRecord | None:
@@ -220,67 +199,6 @@ class AuthStore:
                 "UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?",
                 (self.hash_password(password), datetime.now(timezone.utc).isoformat(), user_id),
             )
-
-    def create_oauth_state(self, nonce: str, minutes: int = 10) -> str:
-        state = secrets.token_urlsafe(32)
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO oauth_states (state_hash, nonce_hash, expires_at) VALUES (?, ?, ?)",
-                (
-                    hashlib.sha256(state.encode()).hexdigest(),
-                    hashlib.sha256(nonce.encode()).hexdigest(),
-                    (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat(),
-                ),
-            )
-        return state
-
-    def consume_oauth_state(self, state: str, nonce: str) -> bool:
-        digest = hashlib.sha256(state.encode()).hexdigest()
-        with self._connect() as connection:
-            row = connection.execute("SELECT * FROM oauth_states WHERE state_hash = ?", (digest,)).fetchone()
-            connection.execute("DELETE FROM oauth_states WHERE state_hash = ?", (digest,))
-        return bool(
-            row
-            and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
-            and hmac.compare_digest(row["nonce_hash"], hashlib.sha256(nonce.encode()).hexdigest())
-        )
-
-    def create_verification_token(self, user_id: str, hours: int = 24) -> str:
-        token = secrets.token_urlsafe(32)
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO email_verification_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                (hashlib.sha256(token.encode()).hexdigest(), user_id, (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()),
-            )
-        return token
-
-    def consume_verification_token(self, token: str) -> UserRecord | None:
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT user_id, expires_at, used_at FROM email_verification_tokens WHERE token_hash = ?",
-                (digest,),
-            ).fetchone()
-            if not row or row["used_at"] or datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
-                return None
-            connection.execute("UPDATE email_verification_tokens SET used_at = ? WHERE token_hash = ?", (datetime.now(timezone.utc).isoformat(), digest))
-            connection.execute("UPDATE users SET email_verified = 1, updated_at = ? WHERE user_id = ?", (datetime.now(timezone.utc).isoformat(), row["user_id"]))
-        return self.get_user(row["user_id"])
-
-    def find_google_user(self, subject: str) -> UserRecord | None:
-        with self._connect() as connection:
-            row = connection.execute("SELECT user_id FROM users WHERE google_subject = ? AND status = 'active'", (subject,)).fetchone()
-        return self.get_user(row["user_id"]) if row else None
-
-    def create_google_user(self, full_name: str, email: str, subject: str, profile_image_url: str | None) -> UserRecord:
-        now = datetime.now(timezone.utc).isoformat()
-        user_id = secrets.token_urlsafe(18)
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO users (user_id, full_name, email, profile_image_url, provider, google_subject, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'google', ?, 1, ?, ?)",
-                (user_id, full_name, email.lower(), profile_image_url, subject, now, now),
-            )
-        return self.get_user(user_id)
 
     def update_user(self, user_id: str, full_name: str, profile_image_url: str | None) -> UserRecord:
         with self._connect() as connection:

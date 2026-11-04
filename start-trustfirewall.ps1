@@ -47,7 +47,7 @@ finally {
 function Test-PortInUse([int]$Port) {
     $client = [System.Net.Sockets.TcpClient]::new()
     try {
-        $client.Connect('127.0.0.1', $Port)
+        $client.Connect('localhost', $Port)
         return $true
     }
     catch {
@@ -72,7 +72,7 @@ function Wait-ForHttp([string]$Url, [string]$ServiceName, [int]$TimeoutSeconds =
     throw "$ServiceName did not become ready at $Url. Check its terminal window for errors."
 }
 
-$healthUrl = "http://127.0.0.1:$backendPort/health"
+$healthUrl = "http://localhost:$backendPort/health"
 $backendReady = $false
 try {
     $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2
@@ -89,7 +89,7 @@ if (-not $backendReady) {
 
     Write-Host "Starting backend at http://127.0.0.1:$backendPort ..."
     Start-Process -FilePath $pythonPath `
-        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--reload', '--host', '127.0.0.1', '--port', "$backendPort") `
+        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--reload', '--host', 'localhost', '--port', "$backendPort") `
         -WorkingDirectory $backendDirectory
     Wait-ForHttp $healthUrl 'Backend'
 }
@@ -97,7 +97,7 @@ else {
     Write-Host "Backend is already running at http://127.0.0.1:$backendPort."
 }
 
-$frontendUrl = "http://127.0.0.1:$frontendPort/"
+$frontendUrl = "http://localhost:$frontendPort/"
 $frontendReady = $false
 try {
     Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 2 | Out-Null
@@ -114,7 +114,7 @@ if (-not $frontendReady) {
 
     Write-Host "Starting frontend at $frontendUrl ..."
     Start-Process -FilePath $env:ComSpec `
-        -ArgumentList @('/c', "npm run dev -- --host 127.0.0.1 --port $frontendPort --strictPort") `
+        -ArgumentList @('/c', "npm run dev -- --host localhost --port $frontendPort --strictPort") `
         -WorkingDirectory $frontendDirectory
     Wait-ForHttp $frontendUrl 'Frontend'
 }
@@ -124,5 +124,5 @@ else {
 
 Write-Host ''
 Write-Host 'TrustFirewall is ready:'
-Write-Host "  Frontend: $frontendUrl"
-Write-Host "  Backend:  http://127.0.0.1:$backendPort"
+Write-Host "  Frontend: http://localhost:$frontendPort/"
+Write-Host "  Backend:  http://localhost:$backendPort"

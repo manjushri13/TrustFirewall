@@ -17,25 +17,6 @@ class AuthStoreTests(unittest.TestCase):
             store.delete_session(token)
             self.assertIsNone(store.get_session_user(token))
 
-    def test_verification_tokens_are_hashed_and_single_use(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            store = AuthStore(Path(directory) / "auth.sqlite3")
-            user = store.create_user("User A", "a@example.com", "a-secure-password")
-            token = store.create_verification_token(user.user_id)
-            verified = store.consume_verification_token(token)
-            self.assertIsNotNone(verified)
-            self.assertTrue(verified.email_verified)
-            self.assertIsNone(store.consume_verification_token(token))
-
-    def test_oauth_state_is_single_use_and_nonce_bound(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            store = AuthStore(Path(directory) / "auth.sqlite3")
-            state = store.create_oauth_state("nonce")
-            self.assertFalse(store.consume_oauth_state(state, "wrong"))
-            state = store.create_oauth_state("nonce")
-            self.assertTrue(store.consume_oauth_state(state, "nonce"))
-            self.assertFalse(store.consume_oauth_state(state, "nonce"))
-
     def test_connections_are_scoped_to_the_user(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = AuthStore(Path(directory) / "auth.sqlite3")
