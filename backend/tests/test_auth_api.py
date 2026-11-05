@@ -1,9 +1,11 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 
 
 class AuthApiTests(unittest.TestCase):
@@ -98,6 +100,31 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["access-control-allow-origin"], self.origin)
         self.assertEqual(response.headers["access-control-allow-credentials"], "true")
+
+    def test_configured_frontend_origin_is_added_without_wildcard(self) -> None:
+        with patch.dict(os.environ, {"TRUSTFIREWALL_FRONTEND_URL": "https://trustfirewall.vercel.app/"}):
+            origins = self.main_module._configured_frontend_origins()
+        self.assertIn("https://trustfirewall.vercel.app", origins)
+        self.assertNotIn("*", origins)
+
+    def test_cookie_settings_switch_for_secure_cross_site_deployment(self) -> None:
+        response = Response()
+        self.main_module._set_session_cookie(response, "test-token")
+        self.assertIn("SameSite=lax", response.headers["set-cookie"])
+        with patch.object(self.main_module, "_cookie_secure", True):
+            secure_response = Response()
+            self.main_module._set_session_cookie(secure_response, "test-token")
+        self.assertIn("SameSite=none", secure_response.headers["set-cookie"])
+        self.assertIn("Secure", secure_response.headers["set-cookie"])
+
+    def test_health_is_public(self) -> None:
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+
+    def test_all_stores_share_configured_database_path(self) -> None:
+        self.assertEqual(self.main_module._document_store.path, self.main_module._auth_store.path)
+        self.assertEqual(self.main_module._document_store.path, self.main_module._agent_store.path)
 
     def test_registration_rejects_duplicates_and_invalid_data(self) -> None:
         payload = {"full_name": "Duplicate User", "email": "duplicate@example.com", "password": "secure-password-123"}

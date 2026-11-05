@@ -8,6 +8,7 @@ import re
 import logging
 from pathlib import Path, PurePath
 from typing import Annotated
+from urllib.parse import urlsplit
 from fastapi import Cookie, FastAPI, File, Header, UploadFile, Response
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,9 +49,23 @@ app = FastAPI(
     version="0.1.0",
     description="Deterministic provenance-aware security analysis for simulated agent actions.",
 )
+
+
+def _configured_frontend_origins() -> list[str]:
+    origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    configured = os.getenv("TRUSTFIREWALL_FRONTEND_URL", "")
+    for value in configured.split(","):
+        origin = value.strip().rstrip("/")
+        parsed = urlsplit(origin)
+        if origin and parsed.scheme in {"http", "https"} and parsed.netloc and not parsed.path and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
+_cookie_secure = os.getenv("TRUSTFIREWALL_COOKIE_SECURE", "false").lower() == "true"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_configured_frontend_origins(),
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
     allow_credentials=True,
@@ -117,8 +132,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
         "trustfirewall_session",
         token,
         httponly=True,
-        secure=os.getenv("TRUSTFIREWALL_COOKIE_SECURE", "false").lower() == "true",
-        samesite="lax",
+        secure=_cookie_secure,
+        samesite="none" if _cookie_secure else "lax",
         max_age=604800,
         path="/",
     )
