@@ -60,19 +60,21 @@ function Test-PortInUse([int]$Port) {
 
 function Wait-ForHttp([string]$Url, [string]$ServiceName, [int]$TimeoutSeconds = 30) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastError = 'No response was received.'
     while ((Get-Date) -lt $deadline) {
         try {
             Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 | Out-Null
             return
         }
         catch {
+            $lastError = $_.Exception.Message
             Start-Sleep -Seconds 1
         }
     }
-    throw "$ServiceName did not become ready at $Url. Check its terminal window for errors."
+    throw "$ServiceName did not become ready at $Url. Last health-check error: $lastError Check its terminal window for errors."
 }
 
-$healthUrl = "http://localhost:$backendPort/health"
+$healthUrl = "http://127.0.0.1:$backendPort/health"
 $backendReady = $false
 try {
     $health = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2
@@ -89,7 +91,7 @@ if (-not $backendReady) {
 
     Write-Host "Starting backend at http://127.0.0.1:$backendPort ..."
     Start-Process -FilePath $pythonPath `
-        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--reload', '--host', 'localhost', '--port', "$backendPort") `
+        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--reload', '--host', '127.0.0.1', '--port', "$backendPort") `
         -WorkingDirectory $backendDirectory
     Wait-ForHttp $healthUrl 'Backend'
 }

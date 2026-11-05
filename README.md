@@ -26,6 +26,28 @@ The backend health endpoint is <http://127.0.0.1:8001/health>. The frontend prox
 
 To stop the services, close the terminal windows opened for the backend and frontend.
 
+## Configure Gemini security analysis
+
+The backend reads `GEMINI_API_KEY` from `backend\.env` for its Gemini-powered
+security analysis. If `backend\.env` does not exist, copy the example file.
+Then open `backend\.env` and set the key:
+
+```powershell
+if (-not (Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
+notepad backend\.env
+```
+
+Add or replace this line with the key you obtained from Google AI Studio:
+
+```text
+GEMINI_API_KEY=your_real_gemini_api_key
+```
+
+Restart the backend after saving.
+Keep the key in the backend `.env` file only; do not put it in frontend files
+or commit it to Git. The `.env` file is ignored by Git. This enables Gemini
+security analysis; it does not configure Gemini as a connected AI agent.
+
 ## Run the services manually
 
 In one terminal, start the backend:
