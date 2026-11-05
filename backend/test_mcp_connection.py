@@ -17,7 +17,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
-API_URL = os.getenv("TRUSTFIREWALL_API_URL", "http://127.0.0.1:8000")
+API_URL = os.getenv("TRUSTFIREWALL_API_URL", "http://127.0.0.1:8001")
 NAME = "TrustFirewall"
 WORKFLOW_ID = "mcp-connection-test"
 

@@ -168,6 +168,8 @@ class AuditEvent(BaseModel):
     risk_score: int = Field(ge=0, le=100)
     evidence_count: int
     evidence: list[Evidence] = Field(default_factory=list)
+    tool_name: str | None = None
+    requested_operation: str | None = None
     created_at: datetime
 
 
@@ -180,6 +182,9 @@ class DocumentScanResult(BaseModel):
     findings: list[DocumentFinding] = Field(default_factory=list)
     provenance: DocumentProvenance | None = None
     extracted_line_count: int = Field(ge=0)
+    analysis_mode: str = "local"
+    analysis_warning: str | None = None
+    error_message: str | None = None
     created_at: datetime
 
 

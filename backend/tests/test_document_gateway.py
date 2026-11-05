@@ -245,12 +245,12 @@ class DocumentGatewayTests(unittest.TestCase):
                 "/api/documents/scan",
                 files=[("files", ("advisory.txt", b"Normal notes with hidden intent.", "text/plain"))],
             ).json()[0]
-        self.assertEqual(result["classification"], "SAFE")
-        self.assertEqual(result["status"], "released")
-        self.assertEqual(result["findings"][0]["rule_id"], "AI-ADVISORY")
-        self.assertEqual(result["findings"][0]["evidence"], "The wording suggests an embedded instruction.")
+        self.assertEqual(result["classification"], "SUSPICIOUS")
+        self.assertEqual(result["status"], "pending_approval")
+        advisory = next(finding for finding in result["findings"] if finding["rule_id"] == "AI-ADVISORY")
+        self.assertEqual(advisory["evidence"], "The wording suggests an embedded instruction.")
 
-    def test_ai_failure_fails_closed(self) -> None:
+    def test_ai_failure_uses_local_fallback(self) -> None:
         with patch(
             "app.main.analyze_document_text",
             side_effect=AISecurityAnalysisError("unavailable"),
@@ -259,13 +259,15 @@ class DocumentGatewayTests(unittest.TestCase):
                 "/api/documents/scan",
                 files=[("files", ("ai-failure.txt", b"Normal notes.", "text/plain"))],
             ).json()[0]
-        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["status"], "released")
+        self.assertEqual(result["analysis_mode"], "local")
+        self.assertIn("local security checks", result["analysis_warning"])
         self.assertEqual(
             self.client.get(
                 f"/api/documents/{result['document_id']}/release",
                 headers={"Authorization": f"Bearer {result['owner_token']}"},
             ).status_code,
-            403,
+            200,
         )
 
     def test_pending_and_override_state_survive_application_restart(self) -> None:

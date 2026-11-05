@@ -24,6 +24,22 @@ When both services are ready, open:
 
 The backend health endpoint is <http://127.0.0.1:8001/health>. The frontend proxies API requests to the backend on port `8001`. The launcher reuses services already responding on the expected ports and reports an error if a port is occupied by a service that is not responding correctly.
 
+## Connect an MCP agent
+
+The genuinely supported integration is the **Custom MCP agent**. On the
+Connections page, enter the command for an upstream MCP server (the demo uses
+`python demo_mcp_server.py`) and save it. Configure your MCP client to launch:
+
+```text
+python -m app.mcp_proxy python demo_mcp_server.py
+```
+
+Run that command from the `backend` directory. Every `tools/call` request is
+sent to TrustFirewall's `/api/intercept` endpoint before it can reach the
+upstream server. Safe calls execute, suspicious calls require approval, and
+malicious calls are blocked. ChatGPT, Claude, and Gemini are listed for
+visibility but do not have direct MCP transports in this build.
+
 To stop the services, close the terminal windows opened for the backend and frontend.
 
 ## Configure Gemini security analysis

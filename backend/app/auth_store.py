@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -28,6 +29,10 @@ class AgentConnectionRecord(BaseModel):
     provider: str
     display_name: str
     status: str
+    transport: str = "stdio"
+    server_url: str | None = None
+    mcp_command: str | None = None
+    mcp_args: list[str] = []
     created_at: datetime
     updated_at: datetime
 
@@ -73,6 +78,20 @@ class AuthStore:
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(agent_connections)")
+            }
+            for name, definition in (
+                ("transport", "TEXT NOT NULL DEFAULT 'stdio'"),
+                ("server_url", "TEXT"),
+                ("mcp_command", "TEXT"),
+                ("mcp_args", "TEXT NOT NULL DEFAULT '[]'"),
+            ):
+                if name not in columns:
+                    connection.execute(
+                        f"ALTER TABLE agent_connections ADD COLUMN {name} {definition}"
+                    )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -131,6 +150,7 @@ class AuthStore:
         if row is None:
             raise LookupError("User was not found.")
         values = dict(row)
+        values["mcp_args"] = json.loads(values.get("mcp_args") or "[]")
         values["created_at"] = datetime.fromisoformat(row["created_at"])
         return UserRecord(**values)
 
@@ -217,12 +237,23 @@ class AuthStore:
         records = []
         for row in rows:
             values = dict(row)
+            values["mcp_args"] = json.loads(values.get("mcp_args") or "[]")
             values["created_at"] = datetime.fromisoformat(row["created_at"])
             values["updated_at"] = datetime.fromisoformat(row["updated_at"])
             records.append(AgentConnectionRecord(**values))
         return records
 
-    def upsert_connection(self, user_id: str, provider: str, status: str) -> AgentConnectionRecord:
+    def upsert_connection(
+        self,
+        user_id: str,
+        provider: str,
+        status: str,
+        *,
+        transport: str = "stdio",
+        server_url: str | None = None,
+        mcp_command: str | None = None,
+        mcp_args: list[str] | None = None,
+    ) -> AgentConnectionRecord:
         now = datetime.now(timezone.utc).isoformat()
         connection_id = secrets.token_urlsafe(18)
         display_name = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Google Gemini", "custom": "Custom agent"}.get(provider, provider)
@@ -230,17 +261,36 @@ class AuthStore:
             connection.execute(
                 """
                 INSERT INTO agent_connections
-                    (connection_id, user_id, provider, display_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, provider) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
+                    (connection_id, user_id, provider, display_name, status, transport, server_url, mcp_command, mcp_args, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, provider) DO UPDATE SET
+                    status = excluded.status,
+                    transport = excluded.transport,
+                    server_url = excluded.server_url,
+                    mcp_command = excluded.mcp_command,
+                    mcp_args = excluded.mcp_args,
+                    updated_at = excluded.updated_at
                 """,
-                (connection_id, user_id, provider, display_name, status, now, now),
+                (
+                    connection_id,
+                    user_id,
+                    provider,
+                    display_name,
+                    status,
+                    transport,
+                    server_url,
+                    mcp_command,
+                    json.dumps(mcp_args or []),
+                    now,
+                    now,
+                ),
             )
             row = connection.execute(
                 "SELECT * FROM agent_connections WHERE user_id = ? AND provider = ?",
                 (user_id, provider),
             ).fetchone()
         values = dict(row)
+        values["mcp_args"] = json.loads(values.get("mcp_args") or "[]")
         values["created_at"] = datetime.fromisoformat(row["created_at"])
         values["updated_at"] = datetime.fromisoformat(row["updated_at"])
         return AgentConnectionRecord(**values)

@@ -198,7 +198,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="TrustFirewall MCP stdio proxy")
     parser.add_argument(
         "--api-url",
-        default=os.getenv("TRUSTFIREWALL_API_URL", "http://127.0.0.1:8000"),
+        default=os.getenv("TRUSTFIREWALL_API_URL", "http://127.0.0.1:8001"),
     )
     parser.add_argument(
         "upstream",

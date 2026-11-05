@@ -1,0 +1,21 @@
+.agent-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:18px}
+.chat-panel{display:flex;flex-direction:column;min-height:620px}
+.chat-log{flex:1;overflow:auto;padding:8px}
+.chat-message{max-width:85%;margin:12px 0;padding:12px 15px;border-radius:10px;background:#f1f5f9}
+.chat-message.user{margin-left:auto;background:#dff5e9}
+.chat-message strong{font-size:12px;color:#52708e}
+.chat-message p{margin:6px 0;white-space:pre-wrap;line-height:1.5}
+.chat-input{display:flex;gap:8px;border-top:1px solid #edf1f5;padding-top:15px}
+.chat-input input{flex:1;border:1px solid #ccd7e4;border-radius:6px;padding:12px;font:inherit}
+.attach{display:grid;place-items:center;border:1px solid #ccd7e4;border-radius:6px;padding:0 12px;cursor:pointer}
+.attach input{display:none}
+.agent-side{height:max-content}
+.report-card{display:grid;gap:5px;border-top:1px solid #edf1f5;padding:12px 0}
+.report-card small{color:#6b7b90}
+.verdict{font-size:11px;font-weight:700;width:max-content;padding:3px 7px;border-radius:10px}
+.verdict.safe{background:#e5f7ed;color:#168b5a}
+.verdict.suspicious{background:#fff3db;color:#a26700}
+.verdict.malicious{background:#ffe5e5;color:#b43e3e}
+.pending-files{border-top:1px solid #edf1f5;padding:12px 0}.pending-file{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #edf1f5;padding:8px 0;font-size:13px}.upload-help{display:block;color:#6b7b90;margin-top:8px}.upload-button{background:#e8f0f8;color:#234667;border:1px solid #c8d6e5;border-radius:6px;padding:9px 14px;cursor:pointer}.upload-button:disabled,.primary:disabled{opacity:.55;cursor:not-allowed}.scan-report{margin-top:12px;border-top:1px solid #cfe0ee;padding-top:10px}.scan-report>div:first-child{display:flex;justify-content:space-between;gap:12px}.scan-report small{display:block;color:#6b7b90;margin-top:4px}.finding-list{margin-top:8px}.finding{border-top:1px solid #dfe8f0;padding:8px 0}.finding p{margin:5px 0}
+.upload-status{color:#187b59;font-size:13px;margin:8px 0}
+@media(max-width:760px){.agent-layout{grid-template-columns:1fr}.chat-panel{min-height:500px}}

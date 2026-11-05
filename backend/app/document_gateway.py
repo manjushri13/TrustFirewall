@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import hashlib
 import re
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePath
@@ -10,6 +11,7 @@ from typing import BinaryIO
 
 from docx import Document
 from pypdf import PdfReader
+import xlrd
 
 from .models import (
     DocumentClassification,
@@ -18,7 +20,7 @@ from .models import (
 )
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".docx", ".csv", ".xlsx", ".xls"}
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,27 @@ def extract_text(filename: str, content: bytes) -> ExtractedDocument:
         document = Document(io.BytesIO(content))
         paragraphs = [paragraph.text for paragraph in document.paragraphs]
         return ExtractedDocument("\n".join(paragraphs), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    raise ValueError("Only TXT, PDF, and DOCX files are supported.")
+    if extension == ".csv":
+        return ExtractedDocument(content.decode("utf-8-sig"), "text/csv")
+    if extension == ".xlsx":
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            shared = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                shared = re.findall(r"<t[^>]*>(.*?)</t>", archive.read("xl/sharedStrings.xml").decode("utf-8"))
+            sheets = []
+            for name in archive.namelist():
+                if name.startswith("xl/worksheets/") and name.endswith(".xml"):
+                    raw = archive.read(name).decode("utf-8")
+                    values = re.findall(r"<v>(.*?)</v>", raw)
+                    sheets.append(" ".join(shared[int(value)] if value.isdigit() and int(value) < len(shared) else value for value in values))
+            return ExtractedDocument("\n".join(sheets), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if extension == ".xls":
+        workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+        rows = []
+        for sheet in workbook.sheets():
+            rows.extend(" ".join(str(value) for value in sheet.row_values(index)) for index in range(sheet.nrows))
+        return ExtractedDocument("\n".join(rows), "application/vnd.ms-excel")
+    raise ValueError("The document format is not supported.")
 
 
 _RULES: tuple[tuple[str, str, str, str], ...] = (
